@@ -1,0 +1,17 @@
+
+
+#chat {
+    float: left;
+}
+
+#msgList {
+    border-width: 1px;
+    border: solid;
+    height:200px;
+    width:300px;
+    overflow:scroll;
+}
+
+#nickList {
+    float:left;
+}
