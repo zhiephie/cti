@@ -23,9 +23,12 @@ import json
 import re
 import struct
 import random
-import config
 import logging as log
+import time
+import config
 from db import DatabaseConnect
+from activity import Activity
+import MySQLdb
 from tornado.ioloop import IOLoop
 from tornado import gen
 from tornado.tcpclient import TCPClient
@@ -51,6 +54,8 @@ logger.addHandler(handler)
 
 # Database
 conn = DatabaseConnect()
+# Activity
+activity = Activity()
 
 ##########################################################################
 # print info start app
@@ -245,7 +250,7 @@ class MainHandler(tornado.web.RequestHandler):
         self.__rh = room_handler
 
     def get(self, action=None):
-        """Render chat.html if required arguments are present, render main.html otherwise."""
+        """Render cticlient.php if required arguments are present, render main.html otherwise."""
         if not action:  # init startup sequence, won't be completed until the websocket connection is established.
             try:
                 room = self.get_argument("room")
@@ -309,11 +314,16 @@ class ClientWSConnection(websocket.WebSocketHandler):
                 pabx_ext = row[2]
                 pabx_afsta = row[3]
                 pabx_vdn = row[4]
-        except conn._db_connection.Error:
+        except MySQLdb.Error:
             print ("Error %d: %s" % (e.args[0], e.args[1]))
             sys.exit(1)
-        finally:
-            conn._db_connection.close()
+        # finally:
+            # conn._db_connection.close()
+        # except conn._db_connection.Error:
+        #     print ("Error %d: %s" % (e.args[0], e.args[1]))
+        #     sys.exit(1)
+        # finally:
+        #     conn._db_connection.close()
 
         varcommand = msg['payload']
 
@@ -327,11 +337,15 @@ class ClientWSConnection(websocket.WebSocketHandler):
             self.atg_stream.write((msg_do_run_device).encode())
             logger.info("| MSG-CTI |> Run device %s" % (msg_do_run_device))
 
-            msg = {
-                "msgtype": "login", "sec": msg['userid'], "agent_id": pabx_agent, "agent_ext": pabx_ext}
+            conditional_query = 'muser_id = %s'
+            conn.update('m_user', conditional_query, msg['userid'], cti_afterstatus=2)
+            # activity.update_after_login_status(2, msg['userid'])
 
-            # query insert to agent activity
-            #dbconn.execute("INSERT INTO Writers(Name) VALUES('Jack London')")
+        elif varcommand == 'loginagent':
+            msg_acd_login = msg['userid'] + ';do_ag_login;' + pabx_ext + \
+                ';' + pabx_agent + ';' + pabx_pass + ';' + pabx_afsta
+            self.atg_stream.write((msg_acd_login).encode())
+            logger.info("| MSG-CTI  |> ACD Login %s" % (msg_acd_login))
 
         elif varcommand == 'ready':
             msg_acd_ready = msg['userid'] + ';do_ag_ready;' + \
@@ -339,17 +353,11 @@ class ClientWSConnection(websocket.WebSocketHandler):
             self.atg_stream.write((msg_acd_ready).encode())
             logger.info("| MSG-CTI |> Ready %s" % (msg_acd_ready))
 
-            msg = {
-                "msgtype": "ready", "sec": msg['userid'], "agent_id": pabx_agent, "agent_ext": pabx_ext}
-
         elif varcommand == 'notready':
             msg_acd_not_ready = msg['userid'] + ';do_ag_aux;' + \
                 pabx_ext + ';' + pabx_agent + ';' + pabx_pass + ';0'
             self.atg_stream.write((msg_acd_not_ready).encode())
             logger.info("| MSG-CTI |> Not Ready %s" % (msg_acd_not_ready))
-
-            msg = {"msgtype": "not ready",
-                   "sec": msg['userid'], "agent_id": pabx_agent, "agent_ext": pabx_ext}
 
         elif varcommand == 'logout':
             msg_acd_shutdown = msg['userid'] + ';do_ag_logout;' + \
@@ -361,16 +369,10 @@ class ClientWSConnection(websocket.WebSocketHandler):
             self.atg_stream.write((msg_do_shutdown).encode())
             logger.info("| MSG-CTI |> Shutdown %s" % (msg_do_shutdown))
 
-            msg = {"msgtype": "shutdown",
-                   "sec": msg['userid'], "agent_id": pabx_agent, "agent_ext": pabx_ext}
-
         elif varcommand == 'makecall':
             msg_do_make_call = msg['userid'] + ';do_dev_make_call;' + '202'
             self.atg_stream.write((msg_do_make_call).encode())
             logger.info("| MSG-CTI |> Make Call %s" % (msg_do_make_call))
-
-            msg = {"msgtype": "makecall",
-                   "sec": msg['userid'], "agent_id": pabx_agent, "agent_ext": pabx_ext}
 
     def on_close(self):
         cid = self.__clientID
@@ -439,7 +441,7 @@ class Application(tornado.web.Application):
             (r"/ws", ClientWSConnection, {'room_handler': rh})
         ]
         settings = dict(
-            cookie_secret="YUDIPURWANTO",
+            cookie_secret="PURWANTO",
             template_path=os.path.join(os.path.dirname(__file__), "templates"),
             static_path=os.path.join(os.path.dirname(__file__), "static"),
             # xsrf_cookies=True,
