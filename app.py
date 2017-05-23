@@ -426,7 +426,8 @@ class ClientWSConnection(websocket.WebSocketHandler):
                     for conn in rconns:
                         conn.write_frame(frame)
                     # yield gen.sleep(random.random() * 10)
-                    yield gen.sleep(0.01)
+                    # yield gen.sleep(0.01)
+                    yield gen.sleep(0.05)
             except StreamClosedError as exc:
                 logger.error("Error connecting to %d: %s", config.atgport, exc)
                 yield gen.sleep(5)
