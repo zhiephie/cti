@@ -66,6 +66,10 @@
             send_text_msg('login', userid);
         }
 
+        function login_agent(userid) {
+            send_text_msg('loginagent', userid);
+        }
+
         function logout(userid) {
             send_text_msg('logout', userid);
         }
@@ -101,14 +105,16 @@
             }
         }
 
-        function send_text_msg(command, userid) {
+        function send_text_msg(command, userid,after=1,call='') {
             text_msg_obj = {
-                "msgtype":"text",
+                "msgtype": "text",
                 "payload": command,
-                "userid" : userid
+                "userid" : userid,
+                "after"  : after,
+                "callno" : call
             };
             jmsg = JSON.stringify(text_msg_obj);
-            console.log(jmsg);
+            // console.log(jmsg);
             ws.send(jmsg);
         };
 
@@ -148,6 +154,7 @@
 <div style="background-color:red;" id="msgList"></div>
 <a href="#" onclick="logout(GetRoom);">logout</a>
 <a href="#" onclick="login(GetRoom);">login</a>
+<a href="#" onclick="login_agent(GetRoom);">login agent</a>
 <a href="#" onclick="readyx(GetRoom);">ready</a>
 <a href="#" onclick="notready(GetRoom);">Not Ready</a>
 <a href="#" onclick="makecall(GetRoom);">Make Call</a>
