@@ -22,7 +22,6 @@ try:
 except:
     from six.moves import configparser
 
-
 ##########################################################################
 # Generate configuration system  (read file config.conf)
 ##########################################################################

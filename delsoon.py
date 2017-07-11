@@ -57,7 +57,6 @@ tdelta = datetime.strptime(s2, FMT) - datetime.strptime(s1, FMT)
 print(tdelta)
 
 
-
 def get_sec(time_str):
     h, m, s = time_str.split(':')
     return int(h) * 3600 + int(m) * 60 + int(s)
