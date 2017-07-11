@@ -16,7 +16,12 @@
 
 """Simplified CTI (Computer telephony integration)."""
 
-import configparser
+#import configparser
+try:
+    import configparser
+except:
+    from six.moves import configparser
+
 
 ##########################################################################
 # Generate configuration system  (read file config.conf)
@@ -34,3 +39,8 @@ mysqlhost = config.get('db', 'host')
 mysqluser = config.get('db', 'user')
 mysqlpass = config.get('db', 'pass')
 mysqldbnm = config.get('db', 'dbnm')
+
+smartcenterhost = config.get('smartcenter', 'host')
+smartcenteruser = config.get('smartcenter', 'user')
+smartcenterpass = config.get('smartcenter', 'pass')
+smartcenterdbnm = config.get('smartcenter', 'dbnm')

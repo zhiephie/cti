@@ -16,7 +16,29 @@
 
 """Simplified CTI (Computer telephony integration)."""
 
-from app import main
+import config
+import MySQLdb
 
-if __name__ == "__main__":
-    main()
+
+class DatabaseConnect(object):
+    _db_connection = None
+    _db_cur = None
+
+    def __init__(self):
+        self._db_connection = MySQLdb.connect(
+            host=config.mysqlhost,
+            user=config.mysqluser,
+            passwd=config.mysqlpass,
+            db=config.mysqldbnm
+        )
+        self._db_cur = self._db_connection.cursor()
+
+    def query(self, query, param=None):
+        return self._db_cur.execute(query, param)
+
+    def version(self):
+        self.query("SELECT VERSION()")
+        return self._db_cur.fetchone()
+
+    def __del__(self):
+        self._db_connection.close()

@@ -24,12 +24,10 @@ import re
 import struct
 import random
 import logging as log
-from logging.handlers import RotatingFileHandler
 import time
-from datetime import datetime
+import datetime
 import config
 from db import DatabaseConnect
-from db import DatabaseSmartcenter
 from activity import Activity
 import constant as const
 import MySQLdb
@@ -48,17 +46,7 @@ from tornado.options import options
 logger = log.getLogger("WHNSMARCTI")
 logger.setLevel(log.INFO)
 
-path = 'log/smartcti.log'
-# if os.path.exists(path):
-    # with open(path, 'rt') as f:
-    # handler = log.FileHandler(path)
-# else:
-    # open(path, 'w')
-# add a rotating handler
-handler = RotatingFileHandler(path, maxBytes=100000,
-                                backupCount=5)
-# handler = log.FileHandler(path)
-
+handler = log.FileHandler('whnlog.log')
 handler.setLevel(log.INFO)
 
 formatter = log.Formatter(
@@ -68,8 +56,6 @@ logger.addHandler(handler)
 
 # Database
 conn = DatabaseConnect()
-# Database Smartcenter
-consmart = DatabaseSmartcenter()
 # Activity
 activity = Activity()
 ##########################################################################
@@ -274,15 +260,6 @@ class MainHandler(tornado.web.RequestHandler):
                 cid = self.__rh.add_roomnick(room, nick)
                 self.set_cookie("ftc_cid", cid)
                 self.set_cookie("ftc_agentid", room)
-                consmart.query(
-                    "SELECT tot_busy_time, tot_ring_time, tot_talk_time FROM agent_activity WHERE agent = %s", ([room]))
-                if consmart._db_cur.rowcount:
-                    r = consmart._db_cur.fetchone()
-    
-                    self.set_cookie("busy_time_" + room, str(r[0]))
-                    self.set_cookie("ring_time_" + room, str(r[1]))
-                    self.set_cookie("talk_time_" + room, str(r[2]))
-
                 emsgs = ["The nickname provided was invalid. It can only contain letters, numbers, - and _.\nPlease try again.",
                          "The room name provided was invalid. It can only contain letters, numbers, - and _.\nPlease try again.",
                          "The maximum number of users in this room (%d) has been reached.\n\nPlease try again later." % MAX_USERS_PER_ROOM,
@@ -291,12 +268,12 @@ class MainHandler(tornado.web.RequestHandler):
                     self.render("maxreached.html", emsg=emsgs[cid])
                 else:
                     if cid < -2:
-                        self.render("main.php", emsg=emsgs[cid])
+                        self.render("main.html", emsg=emsgs[cid])
                     else:
                         self.render("cticlient.php", room_name=room)
                         # self.render("templates/chat.html", room_name=room)
             except tornado.web.MissingArgumentError:
-                self.render("main.php", emsg="")
+                self.render("main.html", emsg="")
         else:
             # drop client from "pending" list. Client cannot establish WS
             # connection.
@@ -319,11 +296,6 @@ class ClientWSConnection(websocket.WebSocketHandler):
     def open(self):
         self.__clientID = self.get_cookie("ftc_cid")
         self.__agentID = self.get_cookie("ftc_agentid")
-        self.__agentClient = self.get_cookie("cookie_id")
-        self.__ext = self.get_cookie("ext_number")
-        self.__vdn_group = self.get_cookie("vdn_group")
-        self.__ip_address = self.get_cookie("ip_address")
-        self.__today = datetime.now().replace(microsecond=0)
         self.__rh.add_client_wsconn(self.__clientID, self)
         logger.info("| WS_OPENED |> %s" % self.__clientID)
 
@@ -333,30 +305,20 @@ class ClientWSConnection(websocket.WebSocketHandler):
         msg['username'] = self.__rh.client_info[self.__clientID]['nick']
 
         """Update After Status"""
-        conn.update('m_user', 'muser_id = %s',
-                    msg['userid'], cti_afterstatus=msg['after'])
-
-        after = str(msg['after'])
-        callno = msg['callno']
-        busy = msg['busy']
-        ringtone = msg['ring']
+        conn.update('m_user', 'muser_id = %s', msg['userid'], cti_afterstatus=msg['after'])
 
         try:
             conn.query(
-                "SELECT cti_agentpabx, cti_password, cti_extension, cti_afterstatus, cti_agent_group FROM m_user WHERE muser_id = %s", ([
-                                                                                                                                        self.__agentClient])
-            )
+                "SELECT cti_agentpabx, cti_password, cti_extension, cti_afterstatus, cti_vdn FROM m_user WHERE muser_id = %s", ([msg['userid']])
+                )
 
             for i in range(conn._db_cur.rowcount):
                 row = conn._db_cur.fetchone()
-                consmart.query(
-                    "SELECT vdn FROM vdn_agent_group WHERE agent_group = %s", ([row[4]]))
-                row_smart = consmart._db_cur.fetchone()
                 pabx_agent = row[0]
                 pabx_pass = row[1]
                 pabx_ext = row[2]
                 pabx_afsta = row[3]
-                pabx_vdn = row_smart[0]
+                pabx_vdn = row[4]
         except MySQLdb.Error:
             print ("Error %d: %s" % (e.args[0], e.args[1]))
             sys.exit(1)
@@ -364,7 +326,7 @@ class ClientWSConnection(websocket.WebSocketHandler):
         varcommand = msg['payload']
 
         if varcommand == 'login':
-            msg_do_login = self.__agentClient + ';do_user_login;' + \
+            msg_do_login = msg['userid'] + ';do_user_login;' + \
                 pabx_agent + ';' + pabx_pass + ';' + pabx_ext + ';' + pabx_vdn
             self.atg_stream.write((msg_do_login).encode())
             logger.info("| MSG-CTI |> Login device %s" % (msg_do_login))
@@ -373,43 +335,28 @@ class ClientWSConnection(websocket.WebSocketHandler):
             self.atg_stream.write((msg_do_run_device).encode())
             logger.info("| MSG-CTI |> Run device %s" % (msg_do_run_device))
 
-        elif varcommand == 'retrieve':
-            msg_retrieve = self.__agentClient + ';do_dev_retrieve_call'
-            self.atg_stream.write((msg_retrieve).encode())
-            logger.info("| MSG-CTI  |> Retrieve Call %s" % (msg_retrieve))
-
-        elif varcommand == 'answer':
-            msg_answer = self.__agentClient + ';do_dev_answer_call'
-            self.atg_stream.write((msg_answer).encode())
-            logger.info("| MSG-CTI  |> Answer Call %s" % (msg_answer))
-
-        elif varcommand == 'hangup':
-            msg_hangup = pabx_ext + ';do_dev_hangup_call'
-            self.atg_stream.write((msg_hangup).encode())
-            logger.info("| MSG-CTI  |> Hangup Call %s" % (msg_hangup))
-
-        elif varcommand == 'loginagent':
-            msg_acd_login = self.__agentClient + ';do_ag_login;' + pabx_ext + \
+        elif varcommand == 'login_agent':
+            msg_acd_login = msg['userid'] + ';do_ag_login;' + pabx_ext + \
                 ';' + pabx_agent + ';' + pabx_pass + ';' + pabx_afsta
             self.atg_stream.write((msg_acd_login).encode())
             logger.info("| MSG-CTI  |> ACD Login %s" % (msg_acd_login))
 
         elif varcommand == 'ready':
-            msg_acd_ready = self.__agentClient + ';do_ag_ready;' + \
+            msg_acd_ready = msg['userid'] + ';do_ag_ready;' + \
                 pabx_ext + ';' + pabx_agent + ';' + pabx_pass + \
                 ';' + pabx_afsta
             self.atg_stream.write((msg_acd_ready).encode())
             logger.info("| MSG-CTI |> Ready %s" % (msg_acd_ready))
 
         elif varcommand == 'notready':
-            msg_acd_not_ready = self.__agentClient + ';do_ag_aux;' + \
+            msg_acd_not_ready = msg['userid'] + ';do_ag_aux;' + \
                 pabx_ext + ';' + pabx_agent + ';' + pabx_pass + \
-                ';' + after
+                ';' + pabx_afsta
             self.atg_stream.write((msg_acd_not_ready).encode())
             logger.info("| MSG-CTI |> Not Ready %s" % (msg_acd_not_ready))
 
         elif varcommand == 'logout':
-            msg_acd_shutdown = self.__agentClient + ';do_ag_logout;' + \
+            msg_acd_shutdown = msg['userid'] + ';do_ag_logout;' + \
                 pabx_ext + ';' + pabx_agent + ';' + pabx_pass + \
                 ';' + pabx_afsta
             self.atg_stream.write((msg_acd_shutdown).encode())
@@ -420,89 +367,9 @@ class ClientWSConnection(websocket.WebSocketHandler):
             logger.info("| MSG-CTI |> Shutdown %s" % (msg_do_shutdown))
 
         elif varcommand == 'makecall':
-            msg_do_make_call = self.__agentClient + ';do_dev_make_call;' + callno
+            msg_do_make_call = msg['userid'] + ';do_dev_make_call;' + '202'
             self.atg_stream.write((msg_do_make_call).encode())
             logger.info("| MSG-CTI |> Make Call %s" % (msg_do_make_call))
-
-        elif varcommand == 'busy':
-            dt = datetime.now().replace(microsecond=0)
-            if busy < 1:
-                busy = 0
-            
-            consmart.query(
-                "SELECT tot_acd_call, tot_abd_call FROM agent_activity where agent = %s", ([self.__agentID]))
-            if consmart._db_cur.rowcount:
-                rr = consmart._db_cur.fetchone()
-                if ringtone == 'busy':
-                    consmart.query(
-                        'UPDATE call_session SET last_status=status, status=3011 WHERE session_id = %s', ([self.__agentID]))
-                    consmart.update('agent_activity', 'agent = %s',
-                                    self.__agentID, tot_busy_time=busy)
-                elif ringtone == 'ring':
-                    consmart.update('agent_activity', 'agent = %s',
-                                    self.__agentID, tot_ring_time=busy)
-                    consmart.query('UPDATE call_session SET last_status=status, status=3004, direction = 1, \
-                        agent_time=now(), agent_ring = now() - agent_ring_time \
-						WHERE session_id = %s', ([self.__clientID]))
-                elif ringtone == 'talk':
-                    consmart.update('agent_activity', 'agent = %s',
-                                    self.__agentID, tot_talk_time=busy)
-                elif ringtone == 'acd':
-                    acd_call = int(busy) + int(rr[0])
-                    consmart.update('agent_activity', 'agent = %s',
-                                    self.__agentID, tot_acd_call=acd_call)
-                elif ringtone == 'abd':
-                    abd_call = int(busy) + int(rr[1])
-                    consmart.update('agent_activity', 'agent = %s',
-                                    self.__agentID, tot_abd_call=abd_call)
-                elif ringtone == 'aux':
-                    logger.info("EVENTLOGGER>> Agent Not Ready")
-                    activity.dblog_AgentActivity(
-                        self.__agentID, 3, self.__vdn_group,
-                        dt, self.__ext, busy, self.__ip_address
-                    )
-                #"""Start Call Session"""
-                elif ringtone == 'offered':
-                    consmart.query(
-                        'SELECT session_id FROM call_session WHERE session_id = %s', ([self.__clientID]))
-                    if consmart._db_cur.rowcount < 1:
-                        consmart.insert('call_session', session_id=self.__clientID, direction=1, status=3002,
-                                        start_time=dt, a_number=busy, b_number=self.__ext, d_number=0,
-                                        agent_id=self.__agentID, agent_group=self.__vdn_group,
-                                        agent_ring_time=datetime.now().replace(microsecond=0),
-                                        agent_time=datetime.now().replace(microsecond=0), agent_ext=self.__ext
-                                        )
-
-                    consmart.query('UPDATE call_session SET last_status=status, status=3002, agent_id = %s, \
-                        agent_group=%s, agent_ext=%s, agent_ring_time=now(), ivr_duration = now() - start_time \
-						WHERE session_id = %s', (self.__agentID, self.__vdn_group, self.__ext, [self.__clientID]))
-
-                elif ringtone == 'hold':
-                    consmart.query(
-                        'UPDATE call_session SET agent_hold = unix_timestamp(now()) WHERE session_id = %s', ([self.__clientID]))
-
-                elif ringtone == 'retrieve':
-                    consmart.query(
-                        'UPDATE call_session SET agent_hold = unix_timestamp(now()) - agent_hold WHERE session_id = %s', ([self.__clientID]))
-
-                elif ringtone == 'disconnect':
-                    consmart.query("UPDATE call_session SET last_status=status, end_time=now(), status=3005, agent_end_time = now(), \
-                        agent_talk = unix_timestamp(now()) - unix_timestamp(agent_time), \
-					    ivr_duration = unix_timestamp(agent_ring_time) - unix_timestamp(start_time) WHERE session_id = %s", ([self.__clientID]))
-
-                elif ringtone == 'originated':
-                    consmart.query(
-                        'UPDATE call_session SET last_status=status, status=3007, b_number=%s WHERE session_id = %s', (busy, [self.__clientID]))
-
-                elif ringtone == 'init':
-                    consmart.query(
-                        'SELECT session_id FROM call_session WHERE session_id = %s', ([self.__clientID]))
-                    if consmart._db_cur.rowcount < 1:
-                        consmart.insert('call_session', session_id=self.__clientID, direction=2, status=3009,
-                                        start_time=dt, a_number=self.__ext, agent_id=self.__agentID,
-                                        agent_group=self.__vdn_group, agent_time=datetime.now().replace(microsecond=0),
-                                        agent_ext=self.__ext
-                                        )
 
     def on_close(self):
         cid = self.__clientID
@@ -557,59 +424,65 @@ class ClientWSConnection(websocket.WebSocketHandler):
                         conn.write_frame(frame)
                     # yield gen.sleep(random.random() * 10)
                     # yield gen.sleep(0.01)
-                    # n = line.decode().strip().split(";")[-1:]
-                    # ext = line.decode().strip().split(";", 1)[0]
-                    atg_codes = line.decode().strip().split(';')
-                    if 2 in range(len(atg_codes)):
-                        # atg_code = line.decode().strip().split(";", 2)[1]
-                        atg_code = atg_codes[1]
-                        dt = datetime.now().replace(microsecond=0)
+                    n = line.decode().strip().split(";")[-1:]
+                    ext = line.decode().strip().split(";", 1)[0]
+                    atg_code = line.decode().strip().split(";", 2)[1]
+                    if int(atg_code) == const.CM_CTI_USER_LOGIN:
+                        logger.info("EVENTLOGGER>> Agent Login")
+                        activity.dblog_AgentActivity(
+                            self.__agentID, #agentid
+                            1, 
+                            1,
+                            datetime.datetime.now().replace(microsecond=0),
+                            ext,
+                            0,
+                            0,
+                            0
+                        )
+                    elif int(atg_code) == const.CM_DEV_AG_READY:
+                        activity.dblog_AgentActivity(
+                            self.__agentID, #agentid
+                            1, 
+                            2,
+                            datetime.datetime.now(),
+                            ext,
+                            0,
+                            0,
+                            0
+                        )
+                    elif int(atg_code) == const.CM_DEV_AG_AUX:
+                        activity.dblog_AgentActivity(
+                            self.__agentID, #agentid
+                            1, 
+                            3,
+                            datetime.datetime.now(),
+                            ext,
+                            0,
+                            0,
+                            0
+                        )
+                    elif int(atg_code) == const.EV_DEV_INITIATED:
+                        logger.info("EVENTLOGGER>> Call initiated data")
+                        activity.dblog_DataCallInitiated(
+                            self.__clientID,
+                            self.__agentID,
+                            0,
+                            3009,
+                            datetime.datetime.now(),
+                            201,
+                            1,
+                            106,
+                            1
+                        )
 
-                        if int(atg_code) == const.CM_CTI_USER_LOGIN:
-                            logger.info("EVENTLOGGER>> Agent Login")
-                            activity.dblog_AgentLogin(
-                                self.__agentID, 1, self.__vdn_group,
-                                dt, self.__ext, 0, 0, 0, self.__ip_address
-                            )
-
-                        elif int(atg_code) == const.CM_DEV_AG_READY:
-                            logger.info("EVENTLOGGER>> Agent Ready")
-                            activity.dblog_AgentActivity(
-                                self.__agentID, 2, self.__vdn_group,
-                                dt, self.__ext, self.__ip_address
-                            )
-
-                        elif int(atg_code) == const.CM_DEV_AG_LOGOUT:
-                            logger.info("EVENTLOGGER>> Agent Logout")
-                            activity.dblog_LogAgentLogout(
-                                self.__agentID, dt, self.__ip_address,
-                                self.__vdn_group, 0, self.__ext
-                            )
-
-                        elif int(atg_code) == const.EV_DEV_INITIATED:
-                            logger.info("EVENTLOGGER>> Agent Call Intitial")
-                            activity.dblog_LogAgentInit(self.__agentID, dt)
-
-                        elif int(atg_code) == const.EV_DEV_CON_CLEAR:
-                            logger.info("EVENTLOGGER>> Agent Call On Clear")
-                            activity.dblog_LogAgentOnClear(self.__agentID, dt)
-
-                        elif int(atg_code) == const.EV_DEV_DELIVERED:
-                            logger.info("EVENTLOGGER>> Agent Call Offered")
-                            activity.dblog_LogAgentOffered(self.__agentID, dt)
-
-                        elif int(atg_code) == const.EV_DEV_ESTABLISHED:
-                            logger.info("EVENTLOGGER>> Agent Call Connected")
-                            activity.dblog_LogAgentConnected(
-                                self.__agentID, dt)
-
-                        elif int(atg_code) == const.EV_DEV_HELD:
-                            logger.info("EVENTLOGGER>> Agent Call Hold")
-                            activity.dblog_LogAgentHold(self.__agentID, dt)
-
-                        elif int(atg_code) == const.EV_DEV_RETRIEVED:
-                            logger.info("EVENTLOGGER>> Agent Call Retrive")
-                            activity.dblog_LogAgentRetrive(self.__agentID, dt)
+                    elif int(atg_code) == "OFFERED":
+                        logger.info("EVENTLOGGER>> Call offered data")
+                    
+                    elif int(atg_code) == const.EV_DEV_ESTABLISHED:
+                        logger.info("EVENTLOGGER>> Call connected data")
+                    
+                    elif int(atg_code) == const.EV_DEV_CON_CLEAR:
+                        logger.info("EVENTLOGGER>> Connection Clear")
 
                     yield gen.sleep(0.5)
             except StreamClosedError as exc:
